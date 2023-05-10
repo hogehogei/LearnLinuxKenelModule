@@ -14,6 +14,6 @@ static void __exit helloworld_exit(void)
 
 module_init(helloworld_init);
 module_exit(helloworld_exit);
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR( "HogeHogei <matsuryo00@gmail.com>" );
 MODULE_DESCRIPTION( "Linux kernel module skeleton" );
