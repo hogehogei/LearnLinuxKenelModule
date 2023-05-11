@@ -21,15 +21,19 @@ static const unsigned int MINOR_BASE = 0;
 // Minor number counts using this device driver
 static const unsigned int EEP_NBANK  = 1;
 
-static const char SAMPLECHAR = 'A';
-
 //
-// declare static functions
+// declare static functions, structs
 //
 static int pseudo_eep_mem_open(struct inode *inode, struct file *file);
 static int pseudo_eep_mem_close(struct inode *inode, struct file *file);
 static ssize_t pseudo_eep_mem_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 static ssize_t pseudo_eep_mem_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+
+typedef struct
+{
+    u8* memory;
+    u32 size;
+} pseudo_eep_mem_area;
 
 // 
 // define static variables
@@ -45,6 +49,25 @@ struct file_operations s_pseudo_eepmem_fops = {
     .write   = pseudo_eep_mem_write,
 };
 
+static pseudo_eep_mem_area s_pseudo_eepmem = { 
+    NULL,               // Need dynamic allocation when load this module
+    1024 * 8,           // 8KB
+};
+
+static size_t calculate_remain_count( size_t max_size, size_t count, loff_t pos )
+{
+    size_t remain_count = 0;
+
+    if( max_size <= pos ){
+        return 0;
+    }
+    if( (max_size <= count) || (pos > (max_size - count)) ){
+        return max_size - pos;
+    }
+
+    return count;
+}
+
 // open時に呼ばれる関数
 static int pseudo_eep_mem_open(struct inode *inode, struct file *file)
 {
@@ -52,30 +75,51 @@ static int pseudo_eep_mem_open(struct inode *inode, struct file *file)
     return 0;
 }
 
-/* close時に呼ばれる関数 */
+// close時に呼ばれる関数
 static int pseudo_eep_mem_close(struct inode *inode, struct file *file)
 {
     pr_info( "%s", __func__ );
     return 0;
 }
 
-/* read時に呼ばれる関数 */
+// read時に呼ばれる関数
 static ssize_t pseudo_eep_mem_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 {
     pr_info( "%s", __func__ );
 
-    if( copy_to_user( buf, &SAMPLECHAR, 1 ) != 0 ){
+    size_t read_count = calculate_remain_count( s_pseudo_eepmem.size, count, *f_pos );
+    if( read_count == 0 ){
+        return 0;
+    }
+
+    u8* eepmem_read_start = s_pseudo_eepmem.memory + *f_pos;
+    if( copy_to_user( buf, eepmem_read_start, read_count ) != 0 ){
         return -EIO;
     }
 
-    return 1;
+    *f_pos += read_count;
+
+    return read_count;
 }
 
-/* write時に呼ばれる関数 */
+// write時に呼ばれる関数
 static ssize_t pseudo_eep_mem_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
     pr_info( "%s", __func__ );
-    return 1;
+
+    size_t write_count = calculate_remain_count( s_pseudo_eepmem.size, count, *f_pos );
+    if( write_count == 0 ){
+        return 0;
+    }
+
+    u8* eepmem_write_start = s_pseudo_eepmem.memory + *f_pos;
+    if( copy_from_user( eepmem_write_start, buf, write_count ) != 0 ){
+        return -EIO;
+    }
+
+    *f_pos += write_count;
+
+    return write_count;
 }
 
 static int __init pseudo_eep_mem_init(void)
@@ -127,12 +171,20 @@ static int __init pseudo_eep_mem_init(void)
         goto DEV_CREATE_ERR;
     }
 
+    // ニセeeprom用メモリ領域確保
+    s_pseudo_eepmem.memory = kzalloc( s_pseudo_eepmem.size, GFP_KERNEL );
+    if( !s_pseudo_eepmem.memory ){
+        pr_err( "%s failed. pseudo_eep_memory area allocation.", __func__ );
+        goto PSEUDO_EEP_MEM_ALLOC_ERR;
+    }
+
     pr_info( "%s succeeded", __func__ );
 
     // initialize succeeded
     return 0;
 
     // error bailout
+PSEUDO_EEP_MEM_ALLOC_ERR:
 DEV_CREATE_ERR:
     cdev_del( &s_pseudo_eep_cdev );
 CDEV_ADD_ERR:
@@ -157,6 +209,8 @@ static void __exit pseudo_eep_mem_exit(void)
     class_destroy( s_pseudo_eep_class );
     // デバイスが使用していたメジャー番号の登録削除
     unregister_chrdev_region( dev, EEP_NBANK );
+    // ニセeepmem領域開放
+    kfree( s_pseudo_eepmem.memory );
 }
 
 module_init(pseudo_eep_mem_init);
