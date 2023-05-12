@@ -6,3 +6,4 @@
 *.symvers
 *.order
 *.img
+a.out
